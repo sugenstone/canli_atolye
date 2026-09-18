@@ -1,0 +1,21 @@
+# Rust
+backend/target/
+backend/data/
+
+# Node
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+frontend/dist/
+
+# Env (örnekler hariç)
+.env
+.env.*
+!.env.example
+
+# OS / editör
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

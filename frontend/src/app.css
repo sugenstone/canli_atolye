@@ -1,0 +1,28 @@
+/*
+	Design system kökü (docs/architecture.md §4.3, §86):
+	- Tailwind v4 CSS-first config
+	- Flowbite Svelte component stilleri için source taraması
+	- Status token'ları: renkler yalnızca burada tanımlanır, component'lerde
+	  hard-code renk kullanılmaz.
+*/
+@import 'tailwindcss';
+@source '../node_modules/flowbite-svelte';
+
+@theme {
+	/* Process status token'ları (MVP renk paleti — renk körlüğü: ikon + tooltip eklenir) */
+	--color-status-pending: #6b7280; /* gray-500 */
+	--color-status-ready: #d97706; /* amber-600 */
+	--color-in-progress: #2563eb; /* blue-600 */
+	--color-paused: #ea580c; /* orange-600 */
+	--color-blocked: #dc2626; /* red-600 */
+	--color-completed: #16a34a; /* green-600 */
+	--color-cancelled: #475569; /* slate-600 */
+
+	/* Proje status token'ları */
+	--color-project-draft: #6b7280;
+	--color-project-active: #2563eb;
+	--color-project-paused: #ea580c;
+	--color-project-completed: #16a34a;
+	--color-project-cancelled: #475569;
+	--color-project-archived: #334155;
+}

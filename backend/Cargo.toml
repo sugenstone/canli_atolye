@@ -1,0 +1,62 @@
+[package]
+name = "canli-atolye-backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework + async runtime
+axum = { version = "0.8", features = ["multipart"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database (SQLx — ORM değil, kontrollü SQL)
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+    "chrono",
+    "uuid",
+    "migrate",
+    "macros",
+    "derive",
+] }
+
+# ID & zaman
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Auth
+argon2 = { version = "0.5", features = ["std"] }
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+
+# HTTP altyapı
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Hatalar
+thiserror = "2"
+async-trait = "0.1"
+
+# SSE akışı
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+
+# Env
+dotenvy = "0.15"
+
+[dev-dependencies]
+http-body-util = "0.1"
+serde_json = "1"
+
+[profile.dev]
+opt-level = 0
+debug = true
