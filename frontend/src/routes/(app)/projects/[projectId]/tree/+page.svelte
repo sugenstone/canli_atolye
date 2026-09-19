@@ -11,6 +11,8 @@
 	import SectionTreeNode from '$lib/components/domain/SectionTreeNode.svelte';
 	import WorkItemsDrawer from '$lib/components/domain/WorkItemsDrawer.svelte';
 	import { workItemService, workItemTypeService } from '$lib/services/api/workItems';
+	import { bulkAssignProcessGroup } from '$lib/services/api/insights';
+	import { processGroupService } from '$lib/services/api/processes';
 	import { sectionService } from '$lib/services/api/sections';
 	import { projectService } from '$lib/services/api/projects';
 	import { ApiError } from '$lib/services/api/client';
@@ -30,6 +32,7 @@
 	// İş kalemleri: bölüm bazlı sayaçlar + drawer + bulk modal
 	let itemCounts = $state<Record<string, number>>({});
 	let types = $state<WorkItemTypeDto[]>([]);
+	let groups = $state<{ id: string; name: string }[]>([]);
 	let drawerOpen = $state(false);
 	let selectedSection = $state<NodeType | null>(null);
 	let bulkItemsOpen = $state(false);
@@ -38,6 +41,14 @@
 	let bulkItemsBusy = $state(false);
 	let bulkItemsError = $state<string | null>(null);
 	let bulkItemsFormEl = $state<HTMLFormElement | undefined>(undefined);
+
+	// Toplu süreç atama
+	let bulkAssignOpen = $state(false);
+	let bulkAssignParent = $state('');
+	let bulkAssignGroupId = $state('');
+	let bulkAssignBusy = $state(false);
+	let bulkAssignError = $state<string | null>(null);
+	let bulkAssignFormEl = $state<HTMLFormElement | undefined>(undefined);
 
 	function countItems(id: string): number {
 		return itemCounts[id] ?? 0;
@@ -74,6 +85,7 @@
 					workItemTypeService.list()
 				]);
 				const counts: Record<string, number> = {};
+				groups = await processGroupService.list().catch(() => []);
 				for (const item of allItems) {
 					counts[item.section_id] = (counts[item.section_id] ?? 0) + 1;
 				}
@@ -252,6 +264,29 @@
 		return nodes.flatMap((n) => [{ node: n, depth }, ...flatten(n.children, depth + 1)]);
 	}
 
+	function openBulkAssign() {
+		bulkAssignParent = '';
+		bulkAssignGroupId = '';
+		bulkAssignError = null;
+		bulkAssignOpen = true;
+	}
+
+	async function submitBulkAssign(e: SubmitEvent) {
+		e.preventDefault();
+		if (bulkAssignBusy || !bulkAssignParent || !bulkAssignGroupId) return;
+		bulkAssignBusy = true;
+		bulkAssignError = null;
+		try {
+			await bulkAssignProcessGroup(projectId, bulkAssignParent, bulkAssignGroupId);
+			bulkAssignOpen = false;
+			await loadTree();
+		} catch (err) {
+			bulkAssignError = err instanceof ApiError ? err.message : 'Toplu atama başarısız.';
+		} finally {
+			bulkAssignBusy = false;
+		}
+	}
+
 	function openBulkItems() {
 		bulkItemsParent = '';
 		bulkItemsTypeId = '';
@@ -303,6 +338,7 @@
 		</p>
 		{#if canManage}
 			<div class="flex flex-wrap gap-2">
+				<AppButton color="alternative" onclick={openBulkAssign}>Süreçleri Ata (Toplu)</AppButton>
 				<AppButton color="alternative" onclick={openBulkItems}>Yapraklara İş Kalemi</AppButton>
 				<AppButton color="alternative" onclick={() => openBulk(null)}>Toplu Bölüm</AppButton>
 				<AppButton onclick={() => openCreate(null)}>+ Bölüm Ekle</AppButton>
@@ -563,6 +599,49 @@
 			onclick={() => bulkItemsFormEl?.requestSubmit()}
 		>
 			{bulkItemsBusy ? 'Ekleniyor…' : 'Ekle'}
+		</AppButton>
+	{/snippet}
+</AppModal>
+
+
+<!-- Toplu süreç atama modalı -->
+<AppModal bind:open={bulkAssignOpen} title="Toplu Süreç Ata">
+	<form bind:this={bulkAssignFormEl} class="flex flex-col gap-4" onsubmit={submitBulkAssign}>
+		{#if bulkAssignError}
+			<div class="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+				{bulkAssignError}
+			</div>
+		{/if}
+		<p class="text-sm text-gray-500 dark:text-gray-400">
+			Seçilen bölümün altındaki <strong>yaprak bölümlerdeki, henüz süreci olmayan tüm iş kalemlerine</strong>
+			bu süreç grubu atanır. Mevcut süreçler korunur.
+		</p>
+		<div>
+			<Label for="ba-parent">Üst bölüm</Label>
+			<Select id="ba-parent" bind:value={bulkAssignParent} required>
+				<option value="">Seçin…</option>
+				{#each flatten(tree ?? []) as { node, depth } (node.id)}
+					<option value={node.id}>{'&nbsp;'.repeat(depth)}{node.name}</option>
+				{/each}
+			</Select>
+		</div>
+		<div>
+			<Label for="ba-group">Süreç grubu</Label>
+			<Select id="ba-group" bind:value={bulkAssignGroupId} required>
+				<option value="">Seçin…</option>
+				{#each groups as g (g.id)}
+					<option value={g.id}>{g.name}</option>
+				{/each}
+			</Select>
+		</div>
+	</form>
+	{#snippet footer()}
+		<AppButton color="alternative" onclick={() => (bulkAssignOpen = false)}>İptal</AppButton>
+		<AppButton
+			disabled={bulkAssignBusy || !bulkAssignParent || !bulkAssignGroupId}
+			onclick={() => bulkAssignFormEl?.requestSubmit()}
+		>
+			{bulkAssignBusy ? 'Atanıyor…' : 'Ata'}
 		</AppButton>
 	{/snippet}
 </AppModal>

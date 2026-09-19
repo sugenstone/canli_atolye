@@ -45,7 +45,7 @@ pub async fn create(
             message: "Proje adı ve kodu zorunludur.".into(),
         });
     }
-    ProjectRepository { pool }
+    let project = ProjectRepository { pool }
         .insert(
             actor.workspace_id,
             NewProject {
@@ -54,7 +54,12 @@ pub async fn create(
                 description: req.description,
             },
         )
-        .await
+        .await?;
+    let _ = crate::infrastructure::repositories::notification_repository::AuditRepository::log(
+        pool, actor.workspace_id, actor.id, "project.created", Some("PROJECT"),
+        Some(&project.id.to_string()), None,
+    ).await;
+    Ok(project)
 }
 
 pub async fn update(
@@ -97,7 +102,12 @@ pub async fn archive(
     if !can(actor.role, Action::ArchiveProject) {
         return Err(DomainError::Forbidden);
     }
-    ProjectRepository { pool }
+    let archived = ProjectRepository { pool }
         .archive(actor.workspace_id, project_id)
-        .await
+        .await?;
+    let _ = crate::infrastructure::repositories::notification_repository::AuditRepository::log(
+        pool, actor.workspace_id, actor.id, "project.archived", Some("PROJECT"),
+        Some(&archived.id.to_string()), None,
+    ).await;
+    Ok(archived)
 }

@@ -8,6 +8,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/services/api/client';
 	import { ApiError } from '$lib/services/api/client';
+	import { page as pageState } from '$app/state';
 
 	const projectId = $derived(page.params.projectId ?? '');
 
@@ -97,7 +98,16 @@
 {:else}
 	<!-- Genel özet -->
 	<section class="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-800/50">
-		<h2 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Proje Özeti</h2>
+		<div class="mb-3 flex items-center justify-between">
+			<h2 class="text-sm font-semibold text-gray-900 dark:text-white">Proje Özeti</h2>
+			<a
+				href="/api/v1/projects/{pageState.params.projectId}/export.csv"
+				class="rounded-md border border-emerald-600 px-2.5 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-500 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+				download
+			>
+				⬇ Excel (CSV)
+			</a>
+		</div>
 		<div class="grid grid-cols-3 gap-3 sm:grid-cols-6">
 			{#each [['Toplam', report.work_items.total, 'text-gray-900 dark:text-white'], ['Tamamlanan', report.work_items.completed, 'text-completed'], ['Devam', report.work_items.in_progress, 'text-in-progress'], ['Bekleyen', report.work_items.pending, 'text-status-pending'], ['Bloke', report.work_items.blocked, 'text-blocked'], ['Geciken', report.work_items.late, 'text-blocked']] as [label, value, cls] (label)}
 				<div class="text-center">

@@ -39,7 +39,7 @@ pub async fn create(
     }
 
     let hash = super::auth_service::hash_password(&req.password)?;
-    UserRepository { pool }
+    let created = UserRepository { pool }
         .insert(NewUser {
             workspace_id,
             email,
@@ -47,7 +47,12 @@ pub async fn create(
             full_name: req.full_name.trim().to_string(),
             role: req.role,
         })
-        .await
+        .await?;
+    let _ = crate::infrastructure::repositories::notification_repository::AuditRepository::log(
+        pool, actor.workspace_id, actor.id, "user.created", Some("USER"),
+        Some(&created.id.to_string()), Some(&format!("\"email\":\"{}\"", created.email)),
+    ).await;
+    Ok(created)
 }
 
 pub async fn update(

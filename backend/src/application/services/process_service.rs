@@ -12,6 +12,7 @@ use crate::domain::permissions::{can, Action};
 use crate::domain::services::process_engine::{
     self, should_promote_to_ready, unblock_target, Transition,
 };
+use crate::infrastructure::repositories::section_repository::SectionRepository;
 use crate::infrastructure::repositories::process_repository::{
     dependencies_for_work_item, EventRepository, ExecutionRepository, NewEvent, ProcessCatalogRepository,
     StatusPatch,
@@ -658,4 +659,194 @@ pub async fn durations(
         })
         .collect();
     Ok(crate::domain::services::duration::compute_durations(&timed, crate::shared::now()))
+}
+
+// ---------------------------------------------------------------------------
+// Toplu süreç grubu atama (MASTER PLAN §23) ve revizyon (§20)
+// ---------------------------------------------------------------------------
+
+/// Üst bölümün altındaki YAPRAK bölümdeki, henüz süreci olmayan tüm iş
+/// kalemlerine grubu ata (idempotent). Tek transaction; kaç item'a atandığını döner.
+pub async fn bulk_assign_group(
+    pool: &SqlitePool,
+    actor: &User,
+    parent_section_id: Uuid,
+    group_id: Uuid,
+) -> Result<usize, DomainError> {
+    ensure_manager(actor)?;
+
+    let parent = SectionRepository::new()
+        .find_in_workspace(pool, actor.workspace_id, parent_section_id)
+        .await?;
+    let group = ProcessCatalogRepository::find_group(pool, actor.workspace_id, group_id).await?;
+    let (steps, _deps) = ProcessCatalogRepository::group_detail(pool, actor.workspace_id, group.id).await?;
+
+    // yapraklar → o bölümlerdeki iş kalemleri
+    let all_sections = SectionRepository::new()
+        .list_by_project(pool, actor.workspace_id, parent.project_id)
+        .await?;
+    let leaves = crate::infrastructure::repositories::work_item_repository::leaves_under(&all_sections, &parent);
+    let leaf_ids: Vec<Uuid> = leaves.iter().map(|s| s.id).collect();
+    let items = WorkItemRepository::list_by_sections(pool, actor.workspace_id, &leaf_ids).await?;
+
+    // zaten aktif süreci olanları çıkar
+    let with_process: std::collections::HashSet<Uuid> = sqlx::query_as::<_, (Uuid,)>(
+        "SELECT DISTINCT work_item_id FROM process_executions
+         WHERE workspace_id = ?1 AND status != 'CANCELLED' AND deleted_at IS NULL",
+    )
+    .bind(actor.workspace_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|(id,)| id)
+    .collect();
+    let targets: Vec<_> = items.into_iter().filter(|i| !with_process.contains(&i.id)).collect();
+    if targets.is_empty() {
+        return Ok(0);
+    }
+
+    let mut tx = pool.begin().await?;
+    let mut count = 0usize;
+    for item in &targets {
+        let created = ExecutionRepository::insert_many(&mut *tx, actor.workspace_id, item.id, group.id, &steps).await?;
+        for exec in &created {
+            EventRepository::insert(
+                &mut *tx,
+                actor.workspace_id,
+                &NewEvent {
+                    process_execution_id: exec.id,
+                    event_type: EventType::Created,
+                    previous_status: None,
+                    new_status: Some(ProcessStatus::Pending),
+                    user_id: actor.id,
+                    team_id: None,
+                    note: Some(format!("Süreç grubu atandı: {}", group.name)),
+                    metadata: None,
+                },
+            )
+            .await?;
+        }
+        promote_pending(&mut *tx, actor, item.id).await?;
+        count += 1;
+    }
+    tx.commit().await?;
+    Ok(count)
+}
+
+/// Revizyon: tamamlanmış süreci yeniden aç — orijinal kayıt korunur,
+/// yeni revision_no'lu execution PENDING olarak doğar (MASTER PLAN §20).
+pub async fn reopen(
+    pool: &SqlitePool,
+    actor: &User,
+    execution_id: Uuid,
+    reason: String,
+) -> Result<ProcessExecution, DomainError> {
+    ensure_manager(actor)?;
+    let reason = reason.trim().to_string();
+    if reason.is_empty() {
+        return Err(DomainError::Validation {
+            message: "Revizyon nedeni zorunludur.".into(),
+        });
+    }
+
+    let mut tx = pool.begin().await?;
+    let exec = sqlx::query_as::<_, ProcessExecution>(
+        "SELECT * FROM process_executions WHERE id = ?1 AND workspace_id = ?2 AND deleted_at IS NULL",
+    )
+    .bind(execution_id)
+    .bind(actor.workspace_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(DomainError::NotFound)?;
+
+    if exec.status != ProcessStatus::Completed {
+        return Err(DomainError::Validation {
+            message: "Yalnızca tamamlanmış süreçler yeniden açılabilir.".into(),
+        });
+    }
+
+    // aynı adıma zaten açık bir revizyon var mı?
+    let (open_rev,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM process_executions
+         WHERE work_item_id = ?1 AND process_group_step_id = ?2
+           AND status NOT IN ('COMPLETED','CANCELLED') AND deleted_at IS NULL",
+    )
+    .bind(exec.work_item_id)
+    .bind(exec.process_group_step_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if open_rev > 0 {
+        return Err(DomainError::Conflict {
+            message: "Bu adımın zaten aktif bir çalışması var.".into(),
+        });
+    }
+
+    // yeni revision execution
+    let revision = ProcessExecution {
+        id: crate::shared::new_id(),
+        workspace_id: exec.workspace_id,
+        work_item_id: exec.work_item_id,
+        process_template_id: exec.process_template_id,
+        process_group_step_id: exec.process_group_step_id,
+        status: ProcessStatus::Pending,
+        status_before_block: None,
+        version: 0,
+        assigned_user_id: exec.assigned_user_id,
+        assigned_team_id: exec.assigned_team_id,
+        planned_start_at: None,
+        planned_end_at: None,
+        ready_at: None,
+        started_at: None,
+        completed_at: None,
+        revision_no: exec.revision_no + 1,
+        parent_execution_id: Some(exec.id),
+        created_at: crate::shared::now(),
+        updated_at: crate::shared::now(),
+        deleted_at: None,
+    };
+    sqlx::query(
+        "INSERT INTO process_executions (id, workspace_id, work_item_id, process_template_id, process_group_step_id,
+                status, version, assigned_user_id, assigned_team_id, revision_no, parent_execution_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10, ?11, ?11)",
+    )
+    .bind(revision.id)
+    .bind(revision.workspace_id)
+    .bind(revision.work_item_id)
+    .bind(revision.process_template_id)
+    .bind(revision.process_group_step_id)
+    .bind(revision.status)
+    .bind(revision.assigned_user_id)
+    .bind(revision.assigned_team_id)
+    .bind(revision.revision_no)
+    .bind(revision.parent_execution_id)
+    .bind(revision.created_at)
+    .execute(&mut *tx)
+    .await?;
+
+    // eskiye REOPENED işareti + yenine REOPENED doğumu
+    EventRepository::insert(&mut *tx, exec.workspace_id, &NewEvent {
+        process_execution_id: exec.id,
+        event_type: EventType::Reopened,
+        previous_status: Some(ProcessStatus::Completed),
+        new_status: None,
+        user_id: actor.id,
+        team_id: None,
+        note: Some(reason.clone()),
+        metadata: Some(format!(r#"{{"new_execution_id":"{0}"}}"#, revision.id)),
+    }).await?;
+    EventRepository::insert(&mut *tx, revision.workspace_id, &NewEvent {
+        process_execution_id: revision.id,
+        event_type: EventType::Reopened,
+        previous_status: None,
+        new_status: Some(ProcessStatus::Pending),
+        user_id: actor.id,
+        team_id: None,
+        note: Some(reason),
+        metadata: Some(format!(r#"{{"parent_execution_id":"{0}"}}"#, exec.id)),
+    }).await?;
+
+    // bağımlılıkları karşılanıyorsa hemen READY
+    promote_pending(&mut *tx, actor, revision.work_item_id).await?;
+    tx.commit().await?;
+    Ok(revision)
 }

@@ -9,6 +9,12 @@
 	import { onMount } from 'svelte';
 	import { Drawer, Sidebar, SidebarGroup, SidebarItem, SidebarBrand } from 'flowbite-svelte';
 	import { session } from '$lib/stores/session.svelte';
+	import {
+		notificationService,
+		search as doSearch,
+		type NotificationDto,
+		type SearchHit
+	} from '$lib/services/api/insights';
 
 	let { children } = $props();
 
@@ -42,6 +48,54 @@
 	function isActive(href: string): boolean {
 		return currentPath === href || currentPath.startsWith(href + '/');
 	}
+
+	// Bildirimler
+	let notifOpen = $state(false);
+	let notifications = $state<NotificationDto[]>([]);
+	const unreadCount = $derived(notifications.filter((n) => !n.read_at).length);
+
+	async function toggleNotifications() {
+		notifOpen = !notifOpen;
+		if (notifOpen) {
+			notifications = await notificationService.list().catch(() => []);
+		}
+	}
+
+	async function readNotification(id: string) {
+		await notificationService.read(id).catch(() => {});
+		notifications = await notificationService.list().catch(() => notifications);
+	}
+
+	// Global arama
+	let searchQ = $state('');
+	let searchHits = $state<SearchHit[] | null>(null);
+	let searchBusy = $state(false);
+	let searchOpen = $state(false);
+
+	async function runSearch() {
+		if (searchQ.trim().length < 2) {
+			searchHits = null;
+			return;
+		}
+		searchBusy = true;
+		searchHits = await doSearch(searchQ.trim()).catch(() => []);
+		searchBusy = false;
+	}
+
+	function goHit(hit: SearchHit) {
+		searchOpen = false;
+		searchHits = null;
+		searchQ = '';
+		void goto(`/projects/${hit.project_id}/tree?sectionId=${hit.section_id}`);
+	}
+
+	// Bildirimleri periyodik çek
+	$effect(() => {
+		const load = () => void notificationService.list().then((n) => (notifications = n)).catch(() => {});
+		load();
+		const t = setInterval(load, 30_000);
+		return () => clearInterval(t);
+	});
 
 	async function logout() {
 		await session.logout();
@@ -138,8 +192,74 @@
 				</span>
 			</div>
 
-			<div class="flex items-center gap-3">
-				<span class="hidden text-sm text-gray-600 sm:block dark:text-gray-400">
+			<div class="flex items-center gap-2">
+				<!-- Global arama -->
+				<div class="relative hidden md:block">
+					<input
+						type="search"
+						class="w-52 rounded-lg border border-gray-300 bg-gray-50 p-1.5 pl-8 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+						placeholder="Ara: daire, tezgah…"
+						bind:value={searchQ}
+						oninput={() => { searchOpen = true; void runSearch(); }}
+						onfocus={() => (searchOpen = true)}
+					/>
+					<svg class="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 10a7 7 0 11-14 0 7 7 0 0114 0z" />
+					</svg>
+					{#if searchOpen && searchHits !== null}
+						<div class="absolute right-0 top-11 z-30 w-80 max-h-80 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+							{#each searchHits as hit (hit.kind + hit.section_id + (hit.work_item_id ?? ''))}
+								<button type="button" class="block w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50" onclick={() => goHit(hit)}>
+									<div class="text-sm font-medium text-gray-900 dark:text-white">{hit.title}</div>
+									<div class="text-xs text-gray-400">{hit.subtitle}</div>
+								</button>
+							{:else}
+								<div class="px-3 py-4 text-sm text-gray-400">Sonuç yok.</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+				<!-- Bildirim zili -->
+				<div class="relative">
+					<button
+						type="button"
+						class="relative rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+						aria-label="Bildirimler"
+						onclick={toggleNotifications}
+					>
+						<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 00-4-5.7V5a2 2 0 10-4 0v.3A6 6 0 006 11v3.2a2 2 0 01-.6 1.4L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+						</svg>
+						{#if unreadCount > 0}
+							<span class="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+								{unreadCount}
+							</span>
+						{/if}
+					</button>
+					{#if notifOpen}
+						<div class="absolute right-0 top-11 z-30 w-80 max-h-96 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+							<div class="flex items-center justify-between border-b border-gray-100 px-3 py-2 dark:border-gray-700">
+								<span class="text-xs font-semibold uppercase text-gray-500">Bildirimler</span>
+								<button type="button" class="text-[11px] font-medium text-blue-600 hover:underline" onclick={async () => { await notificationService.readAll().catch(() => {}); notifications = await notificationService.list().catch(() => notifications); }}>Tümünü okundu işaretle</button>
+							</div>
+							{#each notifications as n (n.id)}
+								<button type="button" class="block w-full px-3 py-2.5 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 {n.read_at ? 'opacity-60' : ''}" onclick={() => void readNotification(n.id)}>
+									<div class="flex items-center gap-2">
+										{#if !n.read_at}<span class="h-2 w-2 shrink-0 rounded-full bg-blue-500"></span>{/if}
+										<span class="text-sm font-medium text-gray-900 dark:text-white">{n.title}</span>
+									</div>
+									<div class="text-xs text-gray-500">{n.message}</div>
+									<div class="text-[10px] text-gray-400">{new Date(n.created_at).toLocaleString('tr-TR')}</div>
+								</button>
+							{:else}
+								<div class="px-3 py-6 text-center text-sm text-gray-400">Bildirim yok.</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+				<span class="hidden text-sm text-gray-600 lg:block dark:text-gray-400">
 					{me?.user.full_name}
 					<span class="ms-1.5 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">
 						{me?.user.role}

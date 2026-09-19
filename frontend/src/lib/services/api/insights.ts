@@ -107,3 +107,69 @@ export interface Durations {
 export function durations(executionId: string): Promise<Durations> {
 	return api.get(`/process-executions/${executionId}/durations`);
 }
+
+/** Faz-sonrası eklemeler: toplu süreç atama, reopen, bildirim, arama, audit */
+
+export function bulkAssignProcessGroup(
+	projectId: string,
+	parentSectionId: string,
+	processGroupId: string
+): Promise<unknown> {
+	return api.post(`/projects/${projectId}/work-items/bulk-assign-process-group`, {
+		parent_section_id: parentSectionId,
+		process_group_id: processGroupId
+	});
+}
+
+export function reopenExecution(executionId: string, reason: string): Promise<unknown> {
+	return api.post(`/process-executions/${executionId}/reopen`, { reason });
+}
+
+export interface NotificationDto {
+	id: string;
+	type: string;
+	title: string;
+	message: string;
+	entity_type?: string | null;
+	entity_id?: string | null;
+	read_at?: string | null;
+	created_at: string;
+}
+
+export const notificationService = {
+	list(): Promise<NotificationDto[]> {
+		return api.get('/notifications');
+	},
+	read(id: string): Promise<{ ok: boolean }> {
+		return api.post(`/notifications/${id}/read`);
+	},
+	readAll(): Promise<{ ok: boolean }> {
+		return api.post('/notifications/read-all');
+	}
+};
+
+export interface SearchHit {
+	kind: 'work_item' | 'section';
+	project_id: string;
+	section_id: string;
+	work_item_id?: string | null;
+	title: string;
+	subtitle: string;
+}
+
+export function search(q: string): Promise<SearchHit[]> {
+	return api.get(`/search?q=${encodeURIComponent(q)}`);
+}
+
+export interface AuditLogDto {
+	id: string;
+	action: string;
+	entity_type?: string | null;
+	metadata?: string | null;
+	timestamp: string;
+	full_name: string;
+}
+
+export function auditLogs(): Promise<AuditLogDto[]> {
+	return api.get('/audit-logs');
+}

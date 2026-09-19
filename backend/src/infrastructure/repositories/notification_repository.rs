@@ -51,7 +51,7 @@ impl NotificationRepository {
         .bind(title)
         .bind(message)
         .bind(entity_type)
-        .bind(entity_id)
+        .bind(entity_id.map(|id| id.to_string()))
         .bind(now())
         .execute(pool)
         .await?;
@@ -103,7 +103,8 @@ impl NotificationRepository {
         user_id: Uuid,
     ) -> Result<Vec<Notification>, DomainError> {
         Ok(sqlx::query_as::<_, Notification>(
-            "SELECT * FROM notifications
+            "SELECT id, workspace_id, user_id, type AS notification_type, title, message, entity_type, entity_id, read_at, created_at
+             FROM notifications
              WHERE workspace_id = ?1 AND user_id = ?2
              ORDER BY created_at DESC LIMIT 50",
         )

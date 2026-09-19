@@ -64,6 +64,24 @@ pub async fn block(
         &state, updated.work_item_id, Some(updated.id), "BLOCKED",
     )
     .await;
+    // Bildirim: ADMIN'lere + atanan kullanıcıya (MASTER PLAN §34)
+    {
+        use crate::infrastructure::repositories::notification_repository::NotificationRepository;
+        let _ = NotificationRepository::notify_roles(
+            &state.pool, auth.user.workspace_id, &["ADMIN", "PROJECT_MANAGER"],
+            "BLOCKED", "İş bloke edildi",
+            &format!("Süreç bloke edildi (neden kayıtlı)."),
+            Some("PROCESS_EXECUTION"), Some(updated.id),
+        ).await;
+        if let Some(uid) = updated.assigned_user_id {
+            let _ = NotificationRepository::notify_user(
+                &state.pool, auth.user.workspace_id, uid,
+                "BLOCKED", "İşiniz bloke edildi",
+                "Atandığınız bir süreç bloke edildi; yönetici inceleyecek.",
+                Some("PROCESS_EXECUTION"), Some(updated.id),
+            ).await;
+        }
+    }
     Ok(Json(updated))
 }
 

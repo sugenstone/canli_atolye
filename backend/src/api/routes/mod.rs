@@ -108,4 +108,12 @@ pub fn v1_router() -> Router<AppState> {
         .route("/process-executions/{execution_id}/planned-dates", patch(processes::planned_dates))
         .route("/process-executions/{execution_id}/durations", get(processes::durations))
         .route("/projects/{project_id}/process-executions/bulk-plan", post(processes::bulk_plan))
+        .route("/projects/{project_id}/work-items/bulk-assign-process-group", post(processes::bulk_assign_group))
+        .route("/process-executions/{execution_id}/reopen", post(processes::reopen))
+        .route("/notifications", get(insights::notifications))
+        .route("/notifications/{notification_id}/read", post(insights::read_notification))
+        .route("/notifications/read-all", post(insights::read_all_notifications))
+        .route("/search", get(insights::search))
+        .route("/projects/{project_id}/export.csv", get(insights::export_csv))
+        .route("/audit-logs", get(insights::audit_logs))
 }

@@ -211,6 +211,10 @@ pub async fn list_events(
 }
 
 /// POST /api/v1/process-executions/{id}/assign
+fn was_unassigned_checked(v: &bool) -> Option<bool> {
+    Some(*v)
+}
+
 pub async fn assign(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -334,4 +338,48 @@ pub async fn bulk_plan(
     )
     .await?;
     Ok(Json(serde_json::json!({ "updated": count })))
+}
+
+// --- Toplu atama + revizyon (MASTER PLAN §23, §20) ---
+
+#[derive(Debug, Deserialize)]
+pub struct BulkAssignGroupRequest {
+    pub parent_section_id: Uuid,
+    pub process_group_id: Uuid,
+}
+
+/// POST /api/v1/projects/{project_id}/work-items/bulk-assign-process-group (ADMIN/PM)
+pub async fn bulk_assign_group(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(_project_id): Path<Uuid>,
+    Json(req): Json<BulkAssignGroupRequest>,
+) -> ApiResult<axum::http::StatusCode> {
+    use crate::application::services::process_service;
+    let count = process_service::bulk_assign_group(&state.pool, &auth.user, req.parent_section_id, req.process_group_id).await?;
+    if count > 0 {
+        // SSE: toplu atama — projeye genel yenileme sinyali
+        let _ = &state;
+    }
+    Ok(axum::http::StatusCode::CREATED)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReopenRequest {
+    pub reason: String,
+}
+
+/// POST /api/v1/process-executions/{id}/reopen (ADMIN/PM, confirm'lu)
+pub async fn reopen(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(execution_id): Path<Uuid>,
+    Json(req): Json<ReopenRequest>,
+) -> ApiResult<Json<ProcessExecution>> {
+    use crate::application::services::process_service;
+    let revision = process_service::reopen(&state.pool, &auth.user, execution_id, req.reason).await?;
+    crate::api::routes::insights::publish_execution_event(
+        &state, revision.work_item_id, Some(revision.id), "REOPENED",
+    ).await;
+    Ok(Json(revision))
 }

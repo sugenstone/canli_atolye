@@ -22,6 +22,7 @@
 		type UserDto,
 		type TeamDto
 	} from '$lib/services/api/users';
+	import { auditLogs, type AuditLogDto } from '$lib/services/api/insights';
 	import type { ProcessGroupDto, ProcessTemplateDto } from '$lib/types';
 
 	let templates = $state<ProcessTemplateDto[]>([]);
@@ -43,6 +44,7 @@
 	let teamName = $state('');
 	let teamBusy = $state(false);
 	let expandedTeamId = $state<string | null>(null);
+	let audit = $state<AuditLogDto[]>([]);
 	let teamMembers = $state<Record<string, { user_id: string; role: string }[]>>({});
 	let memberUserId = $state('');
 
@@ -62,12 +64,14 @@
 		try {
 			const me = await authService.me();
 			workspaceId = me.workspace.id;
-			[templates, groups, users, teams] = await Promise.all([
+			const [templates, groups, users, teams, auditRows] = await Promise.all([
 				processTemplateService.list(),
 				processGroupService.list(),
 				userService.list(workspaceId).catch(() => []),
-				teamAdminService.list().catch(() => [])
+				teamAdminService.list().catch(() => []),
+				auditLogs().catch(() => [])
 			]);
+			audit = auditRows;
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Yüklenemedi.';
 		}
@@ -427,6 +431,26 @@
 				{/if}
 			</div>
 		</section>
+
+		<!-- Denetim kayıtları -->
+		{#if audit.length > 0}
+		<section class="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-800/50">
+			<header class="border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+				<h2 class="text-sm font-semibold text-gray-900 dark:text-white">Denetim Kayıtları</h2>
+				<p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Son 50 yönetimsel işlem (değiştirilemez).</p>
+			</header>
+			<ul class="max-h-64 divide-y divide-gray-100 overflow-y-auto px-4 dark:divide-gray-700">
+				{#each audit as a (a.id)}
+					<li class="flex items-center gap-3 py-2 text-sm">
+						<span class="w-14 shrink-0 text-xs text-gray-400 tabular-nums">{new Date(a.timestamp).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+						<span class="text-xs text-gray-400">{new Date(a.timestamp).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })}</span>
+						<span class="font-medium text-gray-800 dark:text-gray-200">{a.full_name}</span>
+						<span class="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600 dark:bg-gray-700 dark:text-gray-300">{a.action}</span>
+					</li>
+				{/each}
+			</ul>
+		</section>
+		{/if}
 
 		<!-- Şablonlar -->
 		<section class="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-800/50">

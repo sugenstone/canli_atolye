@@ -24,6 +24,7 @@
 		directoryService,
 		noteService
 	} from '$lib/services/api/operations';
+	import { reopenExecution } from '$lib/services/api/insights';
 	import { ApiError } from '$lib/services/api/client';
 	import { authService } from '$lib/services/api/auth';
 	import { PRIORITY, statusToken } from '$lib/config/status';
@@ -84,6 +85,8 @@
 	let attachments = $state<AttachmentDto[]>([]);
 	let uploadBusy = $state(false);
 	let fileInputEl = $state<HTMLInputElement | undefined>(undefined);
+	let reopenExecId = $state<string | null>(null);
+	let reopenReason = $state('');
 
 	// Ekleme formu
 	let showAdd = $state(false);
@@ -338,6 +341,22 @@
 			error = err instanceof ApiError ? err.message : 'Silme başarısız.';
 		} finally {
 			uploadBusy = false;
+		}
+	}
+
+	async function submitReopen() {
+		if (processBusy || !reopenExecId || !reopenReason.trim()) return;
+		processBusy = true;
+		error = null;
+		try {
+			await reopenExecution(reopenExecId, reopenReason.trim());
+			reopenExecId = null;
+			reopenReason = '';
+			if (expandedItemId) await loadDetail(expandedItemId);
+		} catch (err) {
+			error = err instanceof ApiError ? err.message : 'Yeniden açma başarısız.';
+		} finally {
+			processBusy = false;
 		}
 	}
 
@@ -632,6 +651,14 @@
 																	{#if ex.status === 'BLOCKED'}
 																		<AppButton size="xs" disabled={processBusy} onclick={() => resolve(ex.id)}>Blokeyi Kaldır</AppButton>
 																	{/if}
+																	{#if ex.status === 'COMPLETED'}
+																		<button
+																			type="button"
+																			class="rounded p-1 text-gray-400 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-900/30"
+																			title="Revizyon aç"
+																			onclick={() => { reopenExecId = reopenExecId === ex.id ? null : ex.id; reopenReason = ''; }}
+																		>&#8635;</button>
+																	{/if}
 																	<AppButton size="xs" color="alternative" disabled={processBusy} onclick={() => openAssign(ex.id)}>Ata</AppButton>
 																	<button
 																		type="button"
@@ -674,6 +701,21 @@
 																	<div class="flex justify-end gap-1.5">
 																		<AppButton size="xs" color="alternative" onclick={() => (reportExecId = null)}>Vazgeç</AppButton>
 																		<AppButton size="xs" color="red" disabled={processBusy || !reportReason} onclick={submitReport}>Bildir</AppButton>
+																	</div>
+																</div>
+															{/if}
+															{#if reopenExecId === ex.id}
+																<div class="w-full space-y-2 rounded-md border border-amber-200 bg-amber-50/70 p-2 dark:border-amber-700 dark:bg-amber-950/20">
+																	<div class="text-xs font-semibold text-amber-700 dark:text-amber-300">Revizyon Aç</div>
+																	<div class="text-[11px] text-gray-500">Orijinal kayıt korunur; yeni bir revizyon çalışması başlar.</div>
+																	<input
+																		class="w-full rounded-md border border-gray-300 bg-white p-1.5 text-xs dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+																		placeholder="Neden (zorunlu) — ör. ürün hasarlı"
+																		bind:value={reopenReason}
+																	/>
+																	<div class="flex justify-end gap-1.5">
+																		<AppButton size="xs" color="alternative" onclick={() => (reopenExecId = null)}>Vazgeç</AppButton>
+																		<AppButton size="xs" disabled={processBusy || !reopenReason.trim()} onclick={submitReopen}>Aç</AppButton>
 																	</div>
 																</div>
 															{/if}
